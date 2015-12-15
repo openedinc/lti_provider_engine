@@ -57,7 +57,7 @@ module LtiProvider
         else
           # get/create user, authorize user and send auth data
           email = launch[:provider_params]['lis_person_contact_email_primary']
-          if email
+          if email.present?
             if email.include? '@'
               user = User.where(email: email.downcase).first
             else
@@ -66,8 +66,13 @@ module LtiProvider
           end
           unless user
             app = Doorkeeper::Application.where(uid: launch[:provider_params]['oauth_consumer_key']).first
+            #for moodle
             if launch[:provider_params]['ext_user_username'].present?
               username ||= launch[:provider_params]['ext_user_username'].strip.downcase
+            end
+            #for schoology
+            if launch[:provider_params]['custom_username'].present?
+              username ||= launch[:provider_params]['custom_username'].strip.downcase
             end
             user = User.where(provider: app.name, username: username).first if username
             unless user
