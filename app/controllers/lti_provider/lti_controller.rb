@@ -104,7 +104,7 @@ module LtiProvider
 
       def get_partner_name(launch)
         unless @partner_name
-          lti_credentials = lti_credentials_object(launch['oauth_consumer_key']) if params['oauth_consumer_key'].present?
+          lti_credentials = lti_credentials_object(launch['oauth_consumer_key'])
           if lti_credentials.present? and lti_credentials.is_a? Doorkeeper::Application
             @partner_name = app.name
           else
@@ -113,6 +113,14 @@ module LtiProvider
           end
         end
         @partner_name
+      end
+
+      def get_teacher_id(launch)
+        lti_credentials = lti_credentials_object(launch['oauth_consumer_key'])
+        if lti_credentials.present? and lti_credentials.is_a? LtiCredential
+          return lti_credentials.user_id
+        end
+        nil
       end
 
       def lti_provider_by_credentials(lti_credentials, params)
@@ -199,6 +207,7 @@ module LtiProvider
         LtiLaunchEvent.capture_event(
             user_id: user.id,
             resource_id: get_resource_id(launch),
+            ref_id: get_teacher_id(launch),
             partner_name: get_partner_name(launch),
             lms_name: launch[:provider_params]['tool_consumer_info_product_family_code'],
             lms_version: launch[:provider_params]['tool_consumer_info_version']
