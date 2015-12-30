@@ -7,9 +7,8 @@ module LtiProvider
     after_filter :allow_iframe, only: [:launch, :cookie_test, :consume_launch]
 
     def launch
-      app = Doorkeeper::Application.where(uid: params['oauth_consumer_key']).first if params['oauth_consumer_key'].present?
-      provider = IMS::LTI::ToolProvider.new(app.uid, app.secret, params) if app
-      # provider ||= IMS::LTI::ToolProvider.new(params['oauth_consumer_key'], LtiProvider::Config.secret, params)
+      lti_credential = lti_credentials_object(params['oauth_consumer_key']) if params['oauth_consumer_key'].present?
+      provider = lti_provider_by_credentials(lti_credential, params)
       launch = Launch.initialize_from_request(provider, request)
 
       if !launch.valid_provider?
@@ -38,66 +37,9 @@ module LtiProvider
       launch = Launch.where("created_at > ?", 5.minutes.ago).find_by_nonce(params[:nonce])
 
       if launch
-        [:account_id, :course_name, :course_id, :canvas_url, :tool_consumer_instance_guid,
-         :user_id, :user_name, :user_roles, :user_avatar_url].each do |attribute|
-          session["lti_#{attribute}".to_sym] = launch.public_send(attribute)
-        end
-
-        resource_id = launch[:provider_params]['custom_opened_resource_id']
-        launch_presentation_return_url = launch[:provider_params]['launch_presentation_return_url']
-
-        link = "#{ENV['LTI_RUNNER_LINK'].sub(':resource_id', resource_id.to_s)}"
-        if launch[:provider_params]['custom_oauth_access_token'].present?
-          access_token = launch[:provider_params]['custom_oauth_access_token']
-          token = Doorkeeper::AccessToken.by_token access_token if access_token
-        end
-        if token and token.accessible? and token.respond_to?('resource_owner') and token.application.uid == launch[:provider_params]['oauth_consumer_key']
-          link += "oauth_access_token=#{launch[:provider_params]['custom_oauth_access_token']}&"
-          user = token.resource_owner
-        else
-          # get/create user, authorize user and send auth data
-          email = launch[:provider_params]['lis_person_contact_email_primary']
-          if email.present?
-            if email.include? '@'
-              user = User.where(email: email.downcase).first
-            else
-              username = email
-            end
-          end
-          unless user
-            app = Doorkeeper::Application.where(uid: launch[:provider_params]['oauth_consumer_key']).first
-            #for moodle
-            if launch[:provider_params]['ext_user_username'].present?
-              username ||= launch[:provider_params]['ext_user_username'].strip.downcase
-            end
-            #for schoology
-            if launch[:provider_params]['custom_username'].present?
-              username ||= launch[:provider_params]['custom_username'].strip.downcase
-            end
-            user = User.where(provider: app.name, username: username).first if username
-            unless user
-              # create user
-              user_params = new_user_params(app, username, launch[:provider_params])
-              model = User.user_model(user_params[:role])
-              user = model.create(user_params)
-              unless user.valid?
-                user.email = nil
-              end
-              user.save!
-            end
-          end
-          link += "authToken=#{user.api_key.access_token}&userId=#{user.id}&"
-        end
-        link += "lti_nonce=#{params[:nonce]}&launch_presentation_return_url=#{CGI.escape(launch_presentation_return_url)}"
-        app ||= Doorkeeper::Application.where(uid: launch[:provider_params]['oauth_consumer_key']).first
-        LtiLaunchEvent.capture_event(
-          user_id: user.id,
-          resource_id: resource_id,
-          partner_name: app.name,
-          lms_name: launch[:provider_params]['tool_consumer_info_product_family_code'],
-          lms_version: launch[:provider_params]['tool_consumer_info_version']
-        )
-
+        set_data_to_session(launch)
+        link = gen_link(launch, params)
+        capture_launch_event(launch, @user)
         redirect_to link
       else
         return show_error "The tool was not launched successfully. Please try again."
@@ -122,30 +64,154 @@ module LtiProvider
         response.headers.except! 'X-Frame-Options'
       end
 
-      def new_user_params(app, username, provider_params)
-        unless @user_params
-          @user_params = {provider: app.name, promo: app.name}
-          @user_params[:username] = username if username.present?
-          @user_params[:password_confirmation] = @user_params[:password] = SecureRandom.hex
-          if provider_params['lis_person_contact_email_primary'].present?
-            @user_params[:email] = provider_params['lis_person_contact_email_primary'].strip.downcase
-          end
-          if provider_params['lis_person_name_given'].present?
-            @user_params[:first_name] = provider_params['lis_person_name_given'].strip
-          end
-          if provider_params['lis_person_name_family'].present?
-            @user_params[:last_name] = provider_params['lis_person_name_family'].strip
-          end
-          @user_params[:state] = User::STATE_CONFIRMED
-          if provider_params['user_id'].present?
-            @user_params[:provider_user_id] = provider_params['user_id']
-          end
-          if provider_params['roles'].downcase.include? 'instructor'
-            @user_params[:role] = User::TEACHER_ROLE
-          end
-          @user_params[:role] ||= User::STUDENT_ROLE
+      def new_user_params(email, username, partner_name, launch)
+        provider_params = launch[:provider_params]
+        user_params = {provider: partner_name, promo: partner_name}
+        user_params[:username] = username if username.present?
+        user_params[:password_confirmation] = @user_params[:password] = SecureRandom.hex
+        user_params[:email] = email if email.present?
+        if provider_params['lis_person_name_given'].present?
+          user_params[:first_name] = provider_params['lis_person_name_given'].strip
         end
-        @user_params
+        if provider_params['lis_person_name_family'].present?
+          user_params[:last_name] = provider_params['lis_person_name_family'].strip
+        end
+        user_params[:state] = User::STATE_CONFIRMED
+        if provider_params['user_id'].present?
+          user_params[:provider_user_id] = provider_params['user_id']
+        end
+        if provider_params['roles'].downcase.include? 'instructor'
+          user_params[:role] = User::TEACHER_ROLE
+        end
+        user_params[:role] ||= User::STUDENT_ROLE
+        if user_params[:role] == User::STUDENT_ROLE
+          lti_credentials = lti_credentials_object(launch['oauth_consumer_key'])
+          if lti_credentials.is_a? LtiCredential
+            user_params[:managed] = true if user_params[:email].blank?
+            user_params[:account_owner_ids] = [lti_credentials.user_id]
+          end
+        end
+        user_params
+      end
+
+      def lti_credentials_object(key)
+        unless @lti_credentials
+          @lti_credentials = LtiCredential.where(lti_key: key).first
+          @lti_credentials ||= Doorkeeper::Application.where(uid: key).first
+        end
+        @lti_credentials
+      end
+
+      def get_partner_name(launch)
+        unless @partner_name
+          lti_credentials = lti_credentials_object(launch['oauth_consumer_key'])
+          if lti_credentials.present? and lti_credentials.is_a? Doorkeeper::Application
+            @partner_name = app.name
+          else
+            uri = launch[:provider_params]['launch_presentation_return_url']
+            @partner_name = URI.parse(uri).host.sub(/^www\./, '')
+          end
+        end
+        @partner_name
+      end
+
+      def get_teacher_id(launch)
+        lti_credentials = lti_credentials_object(launch['oauth_consumer_key'])
+        if lti_credentials.present? and lti_credentials.is_a? LtiCredential
+          return lti_credentials.user_id
+        end
+        nil
+      end
+
+      def lti_provider_by_credentials(lti_credentials, params)
+        return if lti_credentials.blank?
+        if lti_credentials.is_a? Doorkeeper::Application
+          return IMS::LTI::ToolProvider.new(lti_credentials.uid, lti_credentials.secret, params)
+        end
+        if lti_credentials.is_a? LtiCredential
+          return IMS::LTI::ToolProvider.new(lti_credentials.lti_key, lti_credentials.lti_secret, params)
+        end
+      end
+
+      def set_data_to_session(launch)
+        [:account_id, :course_name, :course_id, :canvas_url, :tool_consumer_instance_guid,
+         :user_id, :user_name, :user_roles, :user_avatar_url].each do |attribute|
+          session["lti_#{attribute}".to_sym] = launch.public_send(attribute)
+        end
+      end
+
+      def get_resource_id(launch)
+        launch[:provider_params]['custom_opened_resource_id']
+      end
+
+      def gen_link(launch, params)
+        resource_id = get_resource_id(launch)
+        launch_presentation_return_url = launch[:provider_params]['launch_presentation_return_url']
+
+        link = "#{ENV['LTI_RUNNER_LINK'].sub(':resource_id', resource_id.to_s)}"
+        if launch[:provider_params]['custom_oauth_access_token'].present?
+          access_token = launch[:provider_params]['custom_oauth_access_token']
+          token = Doorkeeper::AccessToken.by_token access_token if access_token
+        end
+        if token and token.accessible? and token.respond_to?('resource_owner') and
+            token.application.uid == launch[:provider_params]['oauth_consumer_key']
+          link += "oauth_access_token=#{launch[:provider_params]['custom_oauth_access_token']}&"
+          @user = token.resource_owner
+        else
+          @user = get_user_by_lms_data(launch)
+          # get/create user, authorize user and send auth data
+          link += "authToken=#{user.api_key.access_token}&userId=#{user.id}&"
+        end
+        link += "lti_nonce=#{params[:nonce]}&launch_presentation_return_url=#{CGI.escape(launch_presentation_return_url)}"
+        link
+      end
+
+      def get_user_by_lms_data(launch)
+        email = launch[:provider_params]['lis_person_contact_email_primary']
+        if email.present?
+          if email.include? '@'
+            user = User.where(email: email.downcase).first
+          else
+            username = email
+          end
+        end
+        unless user
+          username = get_username(username, launch)
+          partner_name = get_partner_name(launch)
+          user = User.where(provider: partner_name, username: username).first if username
+          unless user
+            # create user
+            user_params = new_user_params(email, username, partner_name, launch)
+            model = User.user_model(user_params[:role])
+            user = model.create(user_params)
+            user.email = nil unless user.valid? # sometimes we have wrong email
+            user.save!
+          end
+        end
+        user
+      end
+
+      def get_username(username, launch)
+        #for moodle
+        if launch[:provider_params]['ext_user_username'].present?
+          username ||= launch[:provider_params]['ext_user_username'].strip.downcase
+        end
+        #for schoology
+        if launch[:provider_params]['custom_username'].present?
+          username ||= launch[:provider_params]['custom_username'].strip.downcase
+        end
+        username
+      end
+
+      def capture_launch_event(launch, user)
+        LtiLaunchEvent.capture_event(
+            user_id: user.id,
+            resource_id: get_resource_id(launch),
+            ref_id: get_teacher_id(launch),
+            partner_name: get_partner_name(launch),
+            lms_name: launch[:provider_params]['tool_consumer_info_product_family_code'],
+            lms_version: launch[:provider_params]['tool_consumer_info_version']
+        )
       end
 
   end
