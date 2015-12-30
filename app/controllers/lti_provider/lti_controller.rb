@@ -160,7 +160,7 @@ module LtiProvider
         else
           @user = get_user_by_lms_data(launch)
           # get/create user, authorize user and send auth data
-          link += "authToken=#{user.api_key.access_token}&userId=#{user.id}&"
+          link += "authToken=#{@user.api_key.access_token}&userId=#{@user.id}&"
         end
         link += "lti_nonce=#{params[:nonce]}&launch_presentation_return_url=#{CGI.escape(launch_presentation_return_url)}"
         link
