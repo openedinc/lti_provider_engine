@@ -84,7 +84,7 @@ module LtiProvider
         elsif provider.consumer_secret.blank?
           "Consumer secret not configured on provider."
         elsif !provider.valid_request?(request)
-          "The OAuth signature was invalid."
+          "The synch of OpenEd did not work. Please try again ensuring the key is pasted exactly as in the document. If that does not work, please see: http://about.opened.com/opened-and-learning-management-systems/ or contact us at support@opened.com"
         elsif oauth_timestamp_too_old?(provider.request_oauth_timestamp)
           "Your request is too old."
         end
