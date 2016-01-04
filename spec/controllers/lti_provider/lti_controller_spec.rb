@@ -79,7 +79,7 @@ describe LtiProvider::LtiController do
     context "with an invalid secret" do
       it "renders an error message" do
         post_lti_request!(LtiProvider::Config.key, 'invalid')
-        expect(response.body).to match "The OAuth signature was invalid."
+        expect(response.body).to match "The synch of OpenEd did not work.  Please try again ensuring the key is pasted exactly as in the document.  If that does not work, please see: http://about.opened.com/opened-and-learning-management-systems/ or contact us at support@opened.com"
       end
     end
   end

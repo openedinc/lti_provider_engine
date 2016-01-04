@@ -7,12 +7,13 @@ module LtiProvider
     after_filter :allow_iframe, only: [:launch, :cookie_test, :consume_launch]
 
     def launch
+      params['oauth_consumer_key'].strip!
       lti_credential = lti_credentials_object(params['oauth_consumer_key']) if params['oauth_consumer_key'].present?
       provider = lti_provider_by_credentials(lti_credential, params)
       launch = Launch.initialize_from_request(provider, request)
 
       if !launch.valid_provider?
-        msg = "#{launch.lti_errormsg} Please be sure you are launching this tool from the link provided in Canvas."
+        msg = launch.lti_errormsg
         return show_error msg
       elsif launch.save
         session[:cookie_test] = true
@@ -68,7 +69,7 @@ module LtiProvider
         provider_params = launch[:provider_params]
         user_params = {provider: partner_name, promo: partner_name}
         user_params[:username] = username if username.present?
-        user_params[:password_confirmation] = @user_params[:password] = SecureRandom.hex
+        user_params[:password_confirmation] = user_params[:password] = SecureRandom.hex
         user_params[:email] = email if email.present?
         if provider_params['lis_person_name_given'].present?
           user_params[:first_name] = provider_params['lis_person_name_given'].strip
