@@ -39,9 +39,13 @@ module LtiProvider
 
       if launch
         set_data_to_session(launch)
-        link = gen_link(launch, params)
-        capture_launch_event(launch, @user)
-        redirect_to link
+        link, new_user = gen_link(launch, params)
+        if new_user
+          capture_launch_event(launch, new_user)
+          redirect_to link
+        else
+          return show_error "Launch is working for non-anonymous users only. Please, change privacy to public and try again."
+        end
       else
         return show_error "The tool was not launched successfully. Please try again."
       end
@@ -157,14 +161,14 @@ module LtiProvider
         if token and token.accessible? and token.respond_to?('resource_owner') and
             token.application.uid == launch[:provider_params]['oauth_consumer_key']
           link += "oauth_access_token=#{launch[:provider_params]['custom_oauth_access_token']}&"
-          @user = token.resource_owner
+          new_user = token.resource_owner
         else
-          @user = get_user_by_lms_data(launch)
+          new_user = get_user_by_lms_data(launch)
           # get/create user, authorize user and send auth data
-          link += "authToken=#{@user.api_key.access_token}&userId=#{@user.id}&"
+          link += "authToken=#{new_user.api_key.access_token}&userId=#{new_user.id}&" if new_user
         end
         link += "lti_nonce=#{params[:nonce]}&launch_presentation_return_url=#{CGI.escape(launch_presentation_return_url)}"
-        link
+        return link, new_user
       end
 
       def get_user_by_lms_data(launch)
@@ -186,7 +190,9 @@ module LtiProvider
             model = User.user_model(user_params[:role])
             user = model.create(user_params)
             user.email = nil unless user.valid? # sometimes we have wrong email
-            user.save!
+            unless user.save
+              return nil
+            end
           end
         end
         user
