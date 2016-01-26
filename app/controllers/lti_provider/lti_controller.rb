@@ -44,7 +44,7 @@ module LtiProvider
           capture_launch_event(launch, new_user)
           redirect_to link
         else
-          return show_error "Launch is working for non-anonymous users only. Please, change privacy to public and try again."
+          return show_error "Only non-anonymous users can launch this assignment. Please change the privacy to public and try again."
         end
       else
         return show_error "The tool was not launched successfully. Please try again."
@@ -207,7 +207,19 @@ module LtiProvider
         if launch[:provider_params]['custom_username'].present?
           username ||= launch[:provider_params]['custom_username'].strip.downcase
         end
+        #for canvas
+        if launch[:provider_params]['custom_canvas_user_login_id'].present?
+          username ||= launch[:provider_params]['custom_canvas_user_login_id'].strip.downcase
+        end
         username
+      end
+
+      def get_user_id(user_id, launch)
+        #for canvas
+        if launch[:provider_params]['custom_canvas_user_id'].present?
+          user_id ||= launch[:provider_params]['custom_canvas_user_id'].strip.downcase
+        end
+        user_id
       end
 
       def capture_launch_event(launch, user)
