@@ -39,7 +39,9 @@ module LtiProvider
 
       if launch
         set_data_to_session(launch)
-        link, new_user = gen_link(launch, params)
+        res = gen_link(launch, params)
+        link = res[0]
+        new_user = res[1]
         if new_user
           capture_launch_event(launch, new_user)
           redirect_to link
@@ -168,7 +170,7 @@ module LtiProvider
           link += "authToken=#{new_user.api_key.access_token}&userId=#{new_user.id}&" if new_user
         end
         link += "lti_nonce=#{params[:nonce]}&launch_presentation_return_url=#{CGI.escape(launch_presentation_return_url)}"
-        return link, new_user
+        [link, new_user]
       end
 
       def get_user_by_lms_data(launch)
