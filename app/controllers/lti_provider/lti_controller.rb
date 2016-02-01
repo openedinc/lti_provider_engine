@@ -39,10 +39,10 @@ module LtiProvider
 
       if launch
         set_data_to_session(launch)
-        res = gen_link(launch, params)
-        link = res[0]
-        new_user = res[1]
+        new_user = get_user(launch)
+        puts "new_user: #{new_user.inspect}"
         if new_user
+          link = gen_link(launch, params, new_user)
           capture_launch_event(launch, new_user)
           redirect_to link
         else
@@ -151,7 +151,21 @@ module LtiProvider
         launch[:provider_params]['custom_opened_resource_id']
       end
 
-      def gen_link(launch, params)
+      def get_user(launch)
+        if launch[:provider_params]['custom_oauth_access_token'].present?
+          access_token = launch[:provider_params]['custom_oauth_access_token']
+          token = Doorkeeper::AccessToken.by_token access_token if access_token
+        end
+        if token and token.accessible? and token.respond_to?('resource_owner') and
+            token.application.uid == launch[:provider_params]['oauth_consumer_key']
+          new_user = token.resource_owner
+        else
+          new_user = get_user_by_lms_data(launch)
+        end
+        new_user
+      end
+
+      def gen_link(launch, params, user)
         resource_id = get_resource_id(launch)
         launch_presentation_return_url = launch[:provider_params]['launch_presentation_return_url']
 
@@ -163,14 +177,11 @@ module LtiProvider
         if token and token.accessible? and token.respond_to?('resource_owner') and
             token.application.uid == launch[:provider_params]['oauth_consumer_key']
           link += "oauth_access_token=#{launch[:provider_params]['custom_oauth_access_token']}&"
-          new_user = token.resource_owner
         else
-          new_user = get_user_by_lms_data(launch)
-          # get/create user, authorize user and send auth data
-          link += "authToken=#{new_user.api_key.access_token}&userId=#{new_user.id}&" if new_user
+          link += "authToken=#{new_user.api_key.access_token}&userId=#{new_user.id}&" if user
         end
         link += "lti_nonce=#{params[:nonce]}&launch_presentation_return_url=#{CGI.escape(launch_presentation_return_url)}"
-        [link, new_user]
+        link
       end
 
       def get_user_by_lms_data(launch)
