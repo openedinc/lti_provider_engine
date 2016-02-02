@@ -40,7 +40,6 @@ module LtiProvider
       if launch
         set_data_to_session(launch)
         new_user = get_user(launch)
-        puts "new_user: #{new_user.inspect}"
         if new_user
           link = gen_link(launch, params, new_user)
           capture_launch_event(launch, new_user)
@@ -178,7 +177,7 @@ module LtiProvider
             token.application.uid == launch[:provider_params]['oauth_consumer_key']
           link += "oauth_access_token=#{launch[:provider_params]['custom_oauth_access_token']}&"
         else
-          link += "authToken=#{new_user.api_key.access_token}&userId=#{new_user.id}&" if user
+          link += "authToken=#{user.api_key.access_token}&userId=#{user.id}&" if user
         end
         link += "lti_nonce=#{params[:nonce]}&launch_presentation_return_url=#{CGI.escape(launch_presentation_return_url)}"
         link
@@ -203,7 +202,7 @@ module LtiProvider
             model = User.user_model(user_params[:role])
             user = model.create(user_params)
             user.email = nil unless user.valid? # sometimes we have wrong email
-            unless user.save
+            unless user.save!
               return nil
             end
           end
@@ -221,7 +220,7 @@ module LtiProvider
           username ||= launch[:provider_params]['custom_username'].strip.downcase
         end
         #for canvas
-        if launch[:provider_params]['custom_canvas_user_login_id'].present?
+        if launch[:provider_params]['custom_canvas_user_login_id'].present? and !launch[:provider_params]['custom_canvas_user_login_id'].include? '@'
           username ||= launch[:provider_params]['custom_canvas_user_login_id'].strip.downcase
         end
         username
