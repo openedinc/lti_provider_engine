@@ -223,7 +223,7 @@ module LtiProvider
         if launch[:provider_params]['custom_canvas_user_login_id'].present? and !launch[:provider_params]['custom_canvas_user_login_id'].include? '@'
           username ||= launch[:provider_params]['custom_canvas_user_login_id'].strip.downcase
         end
-        username
+        username.gsub('@', '_')
       end
 
       def get_user_id(user_id, launch)
