@@ -139,4 +139,11 @@ describe LtiProvider::LtiController do
       expect(response).to be_success
     end
   end
+
+  describe ".get_username" do
+    it "transform email to username" do
+      controller = LtiProvider::LtiController.new
+      expect(controller.send(:get_username, 'email@example.com', {provider_params: {}})).to eq('email_example.com')
+    end
+  end
 end
