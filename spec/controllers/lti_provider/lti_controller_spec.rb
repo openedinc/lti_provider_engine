@@ -145,5 +145,9 @@ describe LtiProvider::LtiController do
       controller = LtiProvider::LtiController.new
       expect(controller.send(:get_username, 'email@example.com', {provider_params: {}})).to eq('email_example.com')
     end
+    it "incoming username is nil" do
+      controller = LtiProvider::LtiController.new
+      expect(controller.send(:get_username, nil, {provider_params: {}})).to eq('')
+    end
   end
 end
